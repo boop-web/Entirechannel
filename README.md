@@ -22,6 +22,28 @@ missed — from a clean browser interface. Powered by
 
 ## Run it
 
+There are two ways to run it — a **Windows app (.exe)** with no install, or
+**Docker** on any OS.
+
+### Option A — Windows app (.exe), no install needed
+
+A single double-clickable file. It bundles Python, yt-dlp **and ffmpeg**, opens
+your browser to the UI, and saves videos to your `Videos\ChannelArchiver`
+folder.
+
+**Get the .exe:**
+- **Download a pre-built one** from the repo's **Actions** tab → latest
+  *Build Windows EXE* run → **Artifacts** → `ChannelArchiver-windows`. (Tagged
+  releases like `v1.0` also attach it under **Releases**.)
+- **Or build it yourself** on a Windows PC (needs
+  [Python 3.10+](https://www.python.org/downloads/)): double-click
+  `build_windows.bat`. The finished app appears at `dist\ChannelArchiver.exe`.
+
+Then just **double-click `ChannelArchiver.exe`** — your browser opens to the
+app. A small console window stays open; close it to quit.
+
+### Option B — Docker (any OS)
+
 ```bash
 docker compose up --build
 ```

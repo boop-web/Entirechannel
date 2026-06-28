@@ -7,6 +7,7 @@ re-runs never miss or re-fetch a video.
 """
 import os
 import re
+import sys
 import json
 import time
 import glob
@@ -16,8 +17,43 @@ from pathlib import Path
 from flask import Flask, request, jsonify, Response, send_from_directory
 import yt_dlp
 
-OUT_DIR = os.environ.get("OUT_DIR", "/downloads")
+# Running as a frozen PyInstaller .exe behaves differently from a normal
+# script: bundled files live in a temp dir, and there is no /downloads volume.
+FROZEN = getattr(sys, "frozen", False)
+
+
+def resource_path(name):
+    """Path to a bundled data file (index.html), whether frozen or not."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, name)
+
+
+def default_out_dir():
+    """Where downloads go by default."""
+    if os.environ.get("OUT_DIR"):
+        return os.environ["OUT_DIR"]
+    if FROZEN:
+        # Desktop app: a friendly folder in the user's home directory.
+        return str(Path.home() / "Videos" / "ChannelArchiver")
+    return "/downloads"  # Docker volume
+
+
+def find_ffmpeg():
+    """Locate ffmpeg so yt-dlp can merge streams. In the .exe we bundle it via
+    imageio-ffmpeg; otherwise rely on it being on PATH (as in the Docker image)."""
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            return os.path.dirname(exe)
+    except Exception:
+        pass
+    return None
+
+
+OUT_DIR = default_out_dir()
 Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+FFMPEG_DIR = find_ffmpeg()
 
 app = Flask(__name__, static_folder=None)
 
@@ -158,6 +194,8 @@ def _build_opts(fmt, audio_only, embed_subs, cookies):
         "max_sleep_interval": 8,
         "postprocessors": [],
     }
+    if FFMPEG_DIR:
+        opts["ffmpeg_location"] = FFMPEG_DIR
 
     if audio_only:
         opts["format"] = "bestaudio/best"
@@ -321,12 +359,45 @@ def api_files():
 # --------------------------------------------------------------------------- #
 # Frontend (single inlined page)
 # --------------------------------------------------------------------------- #
-INDEX_HTML = ""  # filled in below from the bundled template
-with open(os.path.join(os.path.dirname(__file__), "index.html"), "r",
-          encoding="utf-8") as _f:
+with open(resource_path("index.html"), "r", encoding="utf-8") as _f:
     INDEX_HTML = _f.read()
 
 
-if __name__ == "__main__":
+def _serve(host, port):
+    # Prefer waitress (a real WSGI server, bundled in the .exe) over Flask's
+    # dev server; fall back to the dev server when waitress isn't installed.
+    try:
+        from waitress import serve
+        serve(app, host=host, port=port, threads=8, _quiet=True)
+    except ImportError:
+        app.run(host=host, port=port, threaded=True)
+
+
+def main():
+    desktop = FROZEN or os.environ.get("DESKTOP") == "1"
+    host = "127.0.0.1" if desktop else "0.0.0.0"
     port = int(os.environ.get("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port, threaded=True)
+
+    if desktop:
+        # Find a free port if the default is taken, open the browser, and run.
+        import socket, webbrowser
+        s = socket.socket()
+        try:
+            s.bind((host, port))
+            s.close()
+        except OSError:
+            s2 = socket.socket(); s2.bind((host, 0)); port = s2.getsockname()[1]; s2.close()
+        url = f"http://{host}:{port}/"
+        print("=" * 60)
+        print(" Channel Archiver is running.")
+        print(f" Open {url} in your browser if it didn't open automatically.")
+        print(f" Videos are saved to: {OUT_DIR}")
+        print(" Close this window to quit.")
+        print("=" * 60)
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+
+    _serve(host, port)
+
+
+if __name__ == "__main__":
+    main()

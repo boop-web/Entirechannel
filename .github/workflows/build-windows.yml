@@ -1,0 +1,44 @@
+name: Build Windows EXE
+
+# Builds a real, downloadable ChannelArchiver.exe on a Windows runner.
+# - Runs on every push to the branch and can be triggered manually.
+# - Download it afterwards from the run's "Artifacts" section.
+# - Pushing a tag like v1.0 also attaches the exe to a GitHub Release.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build executable
+        run: pyinstaller --noconfirm ChannelArchiver.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChannelArchiver-windows
+          path: dist/ChannelArchiver.exe
+
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ChannelArchiver.exe
