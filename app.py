@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Web UI for bulk-downloading an entire YouTube channel with yt-dlp.
 
-A small Flask app: paste a channel URL in the browser, pick options, and watch
-live progress. Downloads run in a background thread; a download-archive ensures
-re-runs never miss or re-fetch a video.
+A small Flask app: paste a channel URL in the browser, pick where to save, pick
+options, and watch live progress. Downloads run in a background thread; a
+per-channel download-archive ensures re-runs never miss or re-fetch a video.
+
+Files are organized as:  <output folder>/<Channel Name>/<Year>/<video>
 """
 import os
 import re
@@ -11,15 +13,19 @@ import sys
 import json
 import time
 import glob
+import queue
 import threading
 from pathlib import Path
 
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, Response
 import yt_dlp
 
 # Running as a frozen PyInstaller .exe behaves differently from a normal
 # script: bundled files live in a temp dir, and there is no /downloads volume.
 FROZEN = getattr(sys, "frozen", False)
+DESKTOP = FROZEN or os.environ.get("DESKTOP") == "1"
+
+CONFIG_PATH = Path.home() / ".channel_archiver.json"
 
 
 def resource_path(name):
@@ -29,12 +35,12 @@ def resource_path(name):
 
 
 def default_out_dir():
-    """Where downloads go by default."""
+    """Where downloads go by default the very first time."""
     if os.environ.get("OUT_DIR"):
         return os.environ["OUT_DIR"]
-    if FROZEN:
+    if DESKTOP:
         # Desktop app: a friendly folder in the user's home directory.
-        return str(Path.home() / "Videos" / "ChannelArchiver")
+        return str(Path.home() / "Videos" / "Channels")
     return "/downloads"  # Docker volume
 
 
@@ -51,8 +57,31 @@ def find_ffmpeg():
     return None
 
 
-OUT_DIR = default_out_dir()
-Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+def _load_config():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_config(cfg):
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+
+# Current output base folder — user-configurable at runtime, remembered across
+# launches via the config file.
+output_dir = _load_config().get("output_dir") or default_out_dir()
+try:
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+except Exception:
+    output_dir = default_out_dir()
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
 FFMPEG_DIR = find_ffmpeg()
 
 app = Flask(__name__, static_folder=None)
@@ -64,10 +93,13 @@ _lock = threading.Lock()
 _thread = None
 _stop_flag = threading.Event()
 
+
 def _fresh_state():
     return {
         "status": "idle",          # idle|preparing|downloading|stopping|done|error
         "channel": "",
+        "channel_name": "",
+        "dest": "",                # folder this channel is saved to
         "target": "",
         "total": 0,                # videos found in the channel
         "completed": 0,            # downloaded this run
@@ -83,13 +115,13 @@ def _fresh_state():
         "finished_at": None,
     }
 
+
 state = _fresh_state()
 
 
 def log(line):
     with _lock:
         state["log"].append({"t": time.strftime("%H:%M:%S"), "m": str(line)})
-        # keep the log bounded
         if len(state["log"]) > 500:
             state["log"] = state["log"][-500:]
 
@@ -97,14 +129,9 @@ def log(line):
 class _Logger:
     """Feeds yt-dlp's own messages into our state (skips/errors/notices)."""
     def debug(self, msg):
-        if msg.startswith("[debug] "):
-            return
         if "has already been recorded in the archive" in msg:
             with _lock:
                 state["skipped"] += 1
-        # yt-dlp routes most user-facing info through debug()
-        if msg.strip() and not msg.startswith("[download] Downloading item"):
-            pass
 
     def info(self, msg):
         pass
@@ -118,13 +145,22 @@ class _Logger:
         log("✗ " + msg)
 
 
-def _archive_path():
-    return os.path.join(OUT_DIR, "downloaded.txt")
+def _safe_name(name):
+    """Turn a channel title into a folder name that's valid on Windows/macOS/Linux."""
+    name = re.sub(r"\s*-\s*Videos$", "", (name or "").strip(), flags=re.I)
+    name = re.sub(r'[\\/:*?"<>|]+', " ", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:120] or "channel"
 
 
-def _archive_count():
+def _channel_name(info):
+    return (info.get("channel") or info.get("uploader")
+            or info.get("title") or "channel")
+
+
+def _archive_count(archive_path):
     try:
-        with open(_archive_path(), "r", encoding="utf-8") as f:
+        with open(archive_path, "r", encoding="utf-8") as f:
             return sum(1 for _ in f)
     except FileNotFoundError:
         return 0
@@ -161,22 +197,23 @@ def _normalize_target(url):
     return url.rstrip("/") + "/videos"
 
 
-def _build_opts(fmt, audio_only, embed_subs, cookies):
-    archive_before = _archive_count()
+def _build_opts(channel_dir, archive_path, fmt, audio_only, embed_subs, cookies):
+    archive_before = _archive_count(archive_path)
 
     def completed_tracker(d):
-        # Recount the archive on each 'finished' so completed reflects reality.
         if d["status"] == "finished":
             with _lock:
-                state["completed"] = max(0, _archive_count() - archive_before)
+                state["completed"] = max(0, _archive_count(archive_path) - archive_before)
 
+    # <channel>/<year>/<date> - <title> [id].ext  (year is "NA" if unknown)
     outtmpl = os.path.join(
-        OUT_DIR,
-        "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s",
+        channel_dir,
+        "%(upload_date>%Y)s",
+        "%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s",
     )
     opts = {
         "outtmpl": outtmpl,
-        "download_archive": _archive_path(),
+        "download_archive": archive_path,
         "playlistreverse": True,           # oldest first
         "ignoreerrors": True,
         "continuedl": True,
@@ -221,15 +258,15 @@ def _build_opts(fmt, audio_only, embed_subs, cookies):
         )
 
     if cookies:
-        cpath = os.path.join(OUT_DIR, "cookies.txt")
+        cpath = os.path.join(output_dir, "cookies.txt")
         if os.path.exists(cpath):
             opts["cookiefile"] = cpath
         else:
-            log("⚠ cookies enabled but /downloads/cookies.txt not found — ignoring")
+            log(f"⚠ cookies enabled but {cpath} not found — ignoring")
     return opts
 
 
-def _run(channel_url, opts):
+def _run(channel_url, params):
     try:
         target = _normalize_target(channel_url)
         with _lock:
@@ -239,21 +276,35 @@ def _run(channel_url, opts):
             state["message"] = "Scanning channel for all videos…"
         log(f"Scanning {target}")
 
-        # First pass: a flat extract just to count the videos up front.
+        # First pass: a flat extract to count videos and learn the channel name.
         with yt_dlp.YoutubeDL(
             {"quiet": True, "extract_flat": "in_playlist", "skip_download": True,
              "logger": _Logger()}
         ) as ydl:
             info = ydl.extract_info(target, download=False)
         entries = [e for e in (info.get("entries") or []) if e]
+
+        # Build the per-channel destination folder and its own archive file.
+        channel_name = _channel_name(info)
+        channel_dir = os.path.join(output_dir, _safe_name(channel_name))
+        Path(channel_dir).mkdir(parents=True, exist_ok=True)
+        archive_path = os.path.join(channel_dir, "downloaded.txt")
+
         with _lock:
+            state["channel_name"] = channel_name
+            state["dest"] = channel_dir
             state["total"] = len(entries)
-            state["message"] = f"Found {len(entries)} videos. Downloading oldest first…"
             state["status"] = "downloading"
+            state["message"] = (f"Found {len(entries)} videos in “{channel_name}”. "
+                                f"Downloading oldest first into year folders…")
+        log(f"Channel: {channel_name}")
+        log(f"Saving to: {channel_dir}")
         log(f"Found {len(entries)} videos. Starting download (oldest first).")
 
         if _stop_flag.is_set():
             raise yt_dlp.utils.DownloadCancelled()
+
+        opts = _build_opts(channel_dir, archive_path, **params)
 
         # Second pass: the real download.
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -286,11 +337,84 @@ def _run(channel_url, opts):
 
 
 # --------------------------------------------------------------------------- #
+# Native folder picker (desktop only) — a Tk dialog pumped on the main thread.
+# --------------------------------------------------------------------------- #
+_tk_ready = threading.Event()
+_browse_q = queue.Queue()
+_browse_results = {}
+_browse_n = [0]
+
+
+def _run_tk_loop():
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    _tk_ready.set()
+
+    def pump():
+        try:
+            while True:
+                rid, initial = _browse_q.get_nowait()
+                root.update()
+                path = filedialog.askdirectory(
+                    initialdir=initial if os.path.isdir(initial) else None,
+                    title="Choose where to save downloaded videos",
+                    mustexist=False,
+                )
+                _browse_results[rid] = path or ""
+        except queue.Empty:
+            pass
+        root.after(150, pump)
+
+    root.after(150, pump)
+    root.mainloop()
+
+
+# --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
 @app.route("/")
 def index():
     return Response(INDEX_HTML, mimetype="text/html")
+
+
+@app.route("/api/config", methods=["GET", "POST"])
+def api_config():
+    global output_dir
+    if request.method == "POST":
+        if state["status"] in ("preparing", "downloading", "stopping"):
+            return jsonify({"ok": False, "error": "Can't change the folder mid-download."}), 409
+        data = request.get_json(force=True, silent=True) or {}
+        p = (data.get("output_dir") or "").strip()
+        if not p:
+            return jsonify({"ok": False, "error": "Please provide a folder path."}), 400
+        try:
+            Path(p).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Can't use that folder: {e}"}), 400
+        output_dir = p
+        cfg = _load_config()
+        cfg["output_dir"] = p
+        _save_config(cfg)
+    return jsonify({"ok": True, "output_dir": output_dir, "desktop": DESKTOP,
+                    "can_browse": _tk_ready.is_set()})
+
+
+@app.route("/api/browse", methods=["POST"])
+def api_browse():
+    if not _tk_ready.is_set():
+        return jsonify({"ok": False,
+                        "error": "Folder picker isn't available here — type the path instead."}), 400
+    _browse_n[0] += 1
+    rid = _browse_n[0]
+    _browse_q.put((rid, output_dir))
+    for _ in range(1800):  # up to ~3 minutes for the user to choose
+        if rid in _browse_results:
+            return jsonify({"ok": True, "path": _browse_results.pop(rid)})
+        time.sleep(0.1)
+    return jsonify({"ok": False, "error": "Folder picker timed out."})
 
 
 @app.route("/api/start", methods=["POST"])
@@ -304,20 +428,19 @@ def api_start():
     with _lock:
         if state["status"] in ("preparing", "downloading", "stopping"):
             return jsonify({"ok": False, "error": "A download is already running."}), 409
-        # reset
         st = _fresh_state()
         st["started_at"] = time.time()
         state.clear()
         state.update(st)
 
     _stop_flag.clear()
-    opts = _build_opts(
-        fmt=data.get("format"),
-        audio_only=bool(data.get("audioOnly")),
-        embed_subs=bool(data.get("subs", True)),
-        cookies=bool(data.get("cookies")),
-    )
-    _thread = threading.Thread(target=_run, args=(url, opts), daemon=True)
+    params = {
+        "fmt": data.get("format"),
+        "audio_only": bool(data.get("audioOnly")),
+        "embed_subs": bool(data.get("subs", True)),
+        "cookies": bool(data.get("cookies")),
+    }
+    _thread = threading.Thread(target=_run, args=(url, params), daemon=True)
     _thread.start()
     return jsonify({"ok": True})
 
@@ -343,10 +466,10 @@ def api_files():
     exts = ("*.mp4", "*.mkv", "*.webm", "*.mp3", "*.m4a")
     files = []
     for ext in exts:
-        for p in glob.glob(os.path.join(OUT_DIR, "**", ext), recursive=True):
+        for p in glob.glob(os.path.join(output_dir, "**", ext), recursive=True):
             try:
                 files.append({
-                    "name": os.path.relpath(p, OUT_DIR),
+                    "name": os.path.relpath(p, output_dir),
                     "size": os.path.getsize(p),
                     "mtime": os.path.getmtime(p),
                 })
@@ -374,29 +497,39 @@ def _serve(host, port):
 
 
 def main():
-    desktop = FROZEN or os.environ.get("DESKTOP") == "1"
-    host = "127.0.0.1" if desktop else "0.0.0.0"
+    host = "127.0.0.1" if DESKTOP else "0.0.0.0"
     port = int(os.environ.get("PORT", "8000"))
 
-    if desktop:
-        # Find a free port if the default is taken, open the browser, and run.
-        import socket, webbrowser
-        s = socket.socket()
-        try:
-            s.bind((host, port))
-            s.close()
-        except OSError:
-            s2 = socket.socket(); s2.bind((host, 0)); port = s2.getsockname()[1]; s2.close()
-        url = f"http://{host}:{port}/"
-        print("=" * 60)
-        print(" Channel Archiver is running.")
-        print(f" Open {url} in your browser if it didn't open automatically.")
-        print(f" Videos are saved to: {OUT_DIR}")
-        print(" Close this window to quit.")
-        print("=" * 60)
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    if not DESKTOP:
+        _serve(host, port)
+        return
 
-    _serve(host, port)
+    # Desktop: find a free port, open the browser, run the server in the
+    # background, and keep the main thread for the native folder picker.
+    import socket
+    import webbrowser
+    s = socket.socket()
+    try:
+        s.bind((host, port))
+        s.close()
+    except OSError:
+        s2 = socket.socket(); s2.bind((host, 0)); port = s2.getsockname()[1]; s2.close()
+
+    url = f"http://{host}:{port}/"
+    print("=" * 60)
+    print(" Channel Archiver is running.")
+    print(f" Open {url} in your browser if it didn't open automatically.")
+    print(f" Saving videos under: {output_dir}")
+    print(" Close this window to quit.")
+    print("=" * 60)
+
+    threading.Thread(target=_serve, args=(host, port), daemon=True).start()
+    threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    try:
+        _run_tk_loop()          # blocks; services folder-picker requests
+    except Exception:
+        # No GUI toolkit available — keep the server alive without a picker.
+        threading.Event().wait()
 
 
 if __name__ == "__main__":

@@ -42,6 +42,9 @@ folder.
 Then just **double-click `ChannelArchiver.exe`** — your browser opens to the
 app. A small console window stays open; close it to quit.
 
+In the app you can click **📁 Browse…** to pick any save folder (e.g.
+`Documents\Videos\Channels`); your choice is remembered for next time.
+
 ### Option B — Docker (any OS)
 
 ```bash
@@ -61,12 +64,32 @@ Videos are saved to the `./downloads` folder next to these files.
 ## Using it
 
 1. Paste a channel URL, e.g. `https://www.youtube.com/@PewDiePie`.
-2. Choose a quality (capping at 720p/1080p saves enormous space), or tick
+2. Pick a **Save to** folder (Browse… on the Windows app), e.g.
+   `Documents\Videos\Channels`.
+3. Choose a quality (capping at 720p/1080p saves enormous space), or tick
    **Audio only** for MP3.
-3. Click **Download channel**. Watch the progress; the **Files** tab lists what
+4. Click **Download channel**. Watch the progress; the **Files** tab lists what
    has landed on disk.
-4. To make sure nothing was missed, just run it again later — finished videos
+5. To make sure nothing was missed, just run it again later — finished videos
    are skipped instantly and only new/failed ones download.
+
+## How files are organized
+
+The app creates the channel's folder automatically and splits videos by year:
+
+```
+<your folder>/
+└── PewDiePie/
+    ├── 2011/
+    │   └── 2011-04-22 - My First Video [abc123].mp4
+    ├── 2021/
+    │   └── 2021-07-15 - Some Upload [xyz789].mp4
+    └── downloaded.txt        ← per-channel archive (don't delete)
+```
+
+Each channel gets its own `downloaded.txt`, so re-running tracks each channel
+independently and never re-downloads. (Videos with no known upload date land in
+an `NA` year folder.)
 
 ## Options
 

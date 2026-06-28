@@ -36,6 +36,8 @@
   input[type=text]{flex:1;background:var(--bg2);border:1px solid var(--line);color:var(--txt);
     padding:14px 16px;border-radius:12px;font-size:15px;outline:none;transition:border .15s}
   input[type=text]:focus{border-color:var(--accent)}
+  .hint{font-size:12px;color:var(--muted);margin-top:9px}
+  .hint b{color:var(--txt);font-weight:600}
   .opts{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
   .chip{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);
     padding:9px 13px;border-radius:11px;font-size:13px;cursor:pointer;user-select:none;transition:.15s}
@@ -110,6 +112,14 @@
     <div class="urlrow">
       <input id="url" type="text" placeholder="https://www.youtube.com/@PewDiePie" autocomplete="off" spellcheck="false">
     </div>
+
+    <label class="fld" for="outdir" style="margin-top:18px">Save to folder</label>
+    <div class="urlrow">
+      <input id="outdir" type="text" placeholder="C:\Users\you\Videos\Channels" autocomplete="off" spellcheck="false">
+      <button class="ghost" id="browseBtn" title="Choose a folder" style="white-space:nowrap">📁 Browse…</button>
+    </div>
+    <div class="hint" id="folderHint">Files are organized as <b>Channel name</b> ▸ <b>Year</b> ▸ video. The channel folder is created automatically.</div>
+
     <div class="opts">
       <select id="quality" title="Maximum quality">
         <option value="bestvideo*+bestaudio/best">Best quality</option>
@@ -134,6 +144,7 @@
   <div class="card">
     <div class="statusbar"><span class="dot" id="dot"></span><span id="statusTxt">Idle</span></div>
     <div class="msg" id="msg">Paste a channel link above and hit download.</div>
+    <div class="hint hidden" id="saveTo"></div>
 
     <div class="stats">
       <div class="stat"><div class="n" id="sTotal">0</div><div class="k">Videos found</div></div>
@@ -176,6 +187,42 @@ const $ = id => document.getElementById(id);
 const fmtSize = b => { if(!b) return "0 B"; const u=["B","KB","MB","GB","TB"]; let i=0,n=b; while(n>=1024&&i<u.length-1){n/=1024;i++} return n.toFixed(n<10&&i>0?1:0)+" "+u[i]; };
 
 let running = false;
+let canBrowse = false;
+
+// Load the saved output folder and whether a native picker is available.
+async function loadConfig(){
+  try{
+    const r = await fetch("/api/config"); const c = await r.json();
+    $("outdir").value = c.output_dir || "";
+    canBrowse = !!c.can_browse;
+    $("browseBtn").style.display = canBrowse ? "" : "none";
+    if(!c.desktop){
+      $("folderHint").innerHTML = "Running in Docker — this path is inside the container; the mounted <b>./downloads</b> folder maps to your computer. Files are organized as <b>Channel name</b> ▸ <b>Year</b> ▸ video.";
+    }
+  }catch(e){}
+}
+loadConfig();
+
+async function saveFolder(path){
+  const r = await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({output_dir:path})});
+  const j = await r.json();
+  if(!j.ok){ alert(j.error||"Couldn't set that folder"); return false; }
+  $("outdir").value = j.output_dir;
+  return true;
+}
+
+$("browseBtn").onclick = async () => {
+  $("browseBtn").disabled = true;
+  try{
+    const r = await fetch("/api/browse",{method:"POST"});
+    const j = await r.json();
+    if(j.ok && j.path){ await saveFolder(j.path); }
+    else if(!j.ok){ alert(j.error); }
+  }catch(e){} finally{ $("browseBtn").disabled = false; }
+};
+
+// Remember a manually-typed path when the field loses focus.
+$("outdir").addEventListener("change", () => { if($("outdir").value.trim()) saveFolder($("outdir").value.trim()); });
 
 $("startBtn").onclick = async () => {
   const url = $("url").value.trim();
@@ -224,6 +271,11 @@ async function poll(){
     $("dot").className = "dot " + cls;
     $("statusTxt").textContent = txt;
     $("msg").textContent = s.message || "";
+
+    if(s.dest){
+      $("saveTo").classList.remove("hidden");
+      $("saveTo").innerHTML = "Saving to <b>" + s.dest.replace(/</g,"&lt;") + "</b> ▸ organized by year.";
+    } else { $("saveTo").classList.add("hidden"); }
 
     $("sTotal").textContent = s.total;
     $("sDone").textContent = s.completed;
