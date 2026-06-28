@@ -4,3 +4,5 @@ downloads/
 *.webm
 *.part
 cookies.txt
+__pycache__/
+*.pyc

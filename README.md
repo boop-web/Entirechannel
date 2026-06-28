@@ -1,106 +1,80 @@
-# YouTube Channel Downloader (Docker)
+# Channel Archiver — YouTube channel downloader with a web UI
 
 Download **every** video from a YouTube channel — oldest first, with nothing
-missed — using [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) inside Docker.
+missed — from a clean browser interface. Powered by
+[`yt-dlp`](https://github.com/yt-dlp/yt-dlp), runs entirely in Docker.
 
-## What it does
+![UI: paste a channel URL, pick quality, watch live progress.](docs/ui.png)
 
-- Grabs a channel's **entire upload history** (`/videos`), in **chronological
-  order** (first video first), thanks to `--playlist-reverse`.
-- Keeps a **download archive** (`downloads/downloaded.txt`). Every finished
-  video is recorded, so you can stop and re-run anytime — it picks up exactly
-  where it left off and **never re-downloads or skips** a video.
-- Saves **best quality** video+audio merged to `.mp4`, and embeds metadata,
-  thumbnail, and English subtitles.
-- Organizes files as: `downloads/<Channel>/<YYYY-MM-DD> - <Title> [<id>].mp4`.
+## What you get
 
-## Requirements
+- A web page where you **paste a channel link, pick options, and hit
+  Download** — no command line needed.
+- **Live progress**: current video, overall % across the whole channel,
+  download speed, ETA, and counts for downloaded / already-had / errors.
+- Grabs the channel's **entire upload history** in **chronological order**
+  (first video first).
+- A **download archive** so the job is resumable and **never re-downloads or
+  skips** a video — stop and restart anytime, or re-run later to grab new
+  uploads.
+- Best-quality video+audio merged to `.mp4`, with metadata, thumbnail and
+  subtitles embedded. Or audio-only MP3.
 
-- Docker (and optionally Docker Compose). That's it — `ffmpeg` and `yt-dlp`
-  live inside the image.
-- Plenty of disk space. A large channel (like PewDiePie) is **terabytes** at
-  full quality — see the tip below to cap quality.
-
-## Quick start (Docker Compose)
-
-```bash
-# Build the image
-docker compose build
-
-# Download the default channel (PewDiePie), oldest video first
-docker compose run --rm downloader
-
-# Or pick any channel
-CHANNEL_URL="https://www.youtube.com/@MrBeast" docker compose run --rm downloader
-```
-
-Videos appear in the `./downloads` folder next to these files.
-
-## Quick start (plain Docker)
+## Run it
 
 ```bash
-docker build -t yt-channel-downloader .
-
-docker run --rm -v "$(pwd)/downloads:/downloads" \
-  yt-channel-downloader "https://www.youtube.com/@PewDiePie"
+docker compose up --build
 ```
 
-## Resuming / making sure nothing is missed
+Then open **http://localhost:8000** in your browser.
 
-Just run the **same command again**. The archive file makes the job
-*idempotent*: finished videos are skipped instantly, and any that failed or
-are newly uploaded get downloaded. Run it on a schedule (e.g. weekly) to keep
-a channel mirrored.
+Videos are saved to the `./downloads` folder next to these files.
 
-To verify coverage, the number of IDs in `downloads/downloaded.txt` equals the
-number of videos successfully downloaded:
+> Plain Docker (no Compose):
+> ```bash
+> docker build -t yt-channel-archiver .
+> docker run --rm -p 8000:8000 -v "$(pwd)/downloads:/downloads" yt-channel-archiver
+> ```
 
-```bash
-wc -l downloads/downloaded.txt
-```
+## Using it
 
-## Common tweaks
+1. Paste a channel URL, e.g. `https://www.youtube.com/@PewDiePie`.
+2. Choose a quality (capping at 720p/1080p saves enormous space), or tick
+   **Audio only** for MP3.
+3. Click **Download channel**. Watch the progress; the **Files** tab lists what
+   has landed on disk.
+4. To make sure nothing was missed, just run it again later — finished videos
+   are skipped instantly and only new/failed ones download.
 
-Pass extra `yt-dlp` flags after the URL, or use env vars.
+## Options
 
-**Cap quality (saves huge amounts of space):**
-```bash
-docker run --rm -v "$(pwd)/downloads:/downloads" \
-  -e FORMAT="bestvideo[height<=720]+bestaudio/best" \
-  yt-channel-downloader "https://www.youtube.com/@PewDiePie"
-```
+| Option | What it does |
+| --- | --- |
+| **Quality** | Cap resolution to save space (a full channel can be terabytes). |
+| **Audio only** | Extract MP3 instead of video. |
+| **Subtitles** | Download & embed English subtitles. |
+| **Use cookies.txt** | For age-restricted / sign-in videos — see below. |
 
-**Audio only (MP3):**
-```bash
-docker run --rm -v "$(pwd)/downloads:/downloads" \
-  yt-channel-downloader "https://www.youtube.com/@PewDiePie" \
-  --extract-audio --audio-format mp3
-```
+### Age-restricted videos (cookies)
 
-**Also get Shorts or Livestreams** — point the URL at that tab:
-```bash
-docker run --rm -v "$(pwd)/downloads:/downloads" \
-  yt-channel-downloader "https://www.youtube.com/@PewDiePie/shorts"
-```
+Export your browser cookies (a "Get cookies.txt" extension works) to
+`downloads/cookies.txt`, then tick **Use cookies.txt** before starting.
 
-## Age-restricted / sign-in-required videos (cookies)
+## Heads-up
 
-Some videos need a logged-in account. Export your browser cookies to
-`downloads/cookies.txt` (use a "Get cookies.txt" browser extension) and add:
+- **Disk space**: a big channel like PewDiePie is ~4,700 videos — multiple
+  **terabytes** at full quality. Cap the quality unless you have the room.
+- **Use responsibly**: this is for personal/archival use. Respect YouTube's
+  Terms of Service and copyright.
+- YouTube changes often. If downloads start failing, rebuild to get the latest
+  `yt-dlp`: `docker compose build --no-cache`.
+
+## Command-line mode (optional)
+
+A standalone script is still included if you prefer the terminal:
 
 ```bash
 docker run --rm -v "$(pwd)/downloads:/downloads" \
-  yt-channel-downloader "https://www.youtube.com/@PewDiePie" \
-  --cookies /downloads/cookies.txt
+  --entrypoint /app/download.sh \
+  yt-channel-archiver "https://www.youtube.com/@PewDiePie"
 ```
-
-## Notes & limits
-
-- **Use responsibly.** Download only content you have the right to, and respect
-  YouTube's Terms of Service and copyright. This tool is for personal/archival
-  use.
-- YouTube changes often. If downloads start failing, rebuild the image to get
-  the latest `yt-dlp`: `docker compose build --no-cache`.
-- The script sleeps a few seconds between requests to avoid hammering YouTube
-  and reduce the chance of throttling/blocks. Don't set this to zero for large
-  channels.

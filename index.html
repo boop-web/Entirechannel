@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Channel Archiver</title>
+<style>
+  :root{
+    --bg:#0d0f14; --bg2:#141821; --card:#181d28; --line:#262d3b;
+    --txt:#e7ebf3; --muted:#8b93a7; --accent:#ff2d55; --accent2:#ff5c7a;
+    --green:#2ecc71; --amber:#f5a623; --blue:#4f8cff;
+    --radius:16px; --shadow:0 10px 40px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 80% -10%,#1b2030 0%,var(--bg) 55%);
+    color:var(--txt);-webkit-font-smoothing:antialiased;line-height:1.5;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:28px}
+  .logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    box-shadow:0 6px 20px rgba(255,45,85,.4)}
+  .logo svg{width:24px;height:24px;fill:#fff}
+  h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px;box-shadow:var(--shadow);margin-bottom:20px}
+
+  label.fld{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--muted);margin-bottom:8px;font-weight:600}
+  .urlrow{display:flex;gap:10px}
+  input[type=text]{flex:1;background:var(--bg2);border:1px solid var(--line);color:var(--txt);
+    padding:14px 16px;border-radius:12px;font-size:15px;outline:none;transition:border .15s}
+  input[type=text]:focus{border-color:var(--accent)}
+  .opts{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+  .chip{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);
+    padding:9px 13px;border-radius:11px;font-size:13px;cursor:pointer;user-select:none;transition:.15s}
+  .chip:hover{border-color:#3a4256}
+  .chip input{accent-color:var(--accent);width:16px;height:16px}
+  select{background:var(--bg2);border:1px solid var(--line);color:var(--txt);border-radius:11px;
+    padding:9px 12px;font-size:13px;outline:none}
+  .btnrow{display:flex;gap:10px;margin-top:18px}
+  button{font-size:15px;font-weight:600;border:none;border-radius:12px;padding:13px 22px;cursor:pointer;
+    transition:.15s;display:inline-flex;align-items:center;gap:8px}
+  .primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;flex:1;justify-content:center}
+  .primary:hover{filter:brightness(1.08)}
+  .primary:disabled{opacity:.45;cursor:not-allowed;filter:none}
+  .ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .ghost:hover{color:var(--txt);border-color:#3a4256}
+  .ghost:disabled{opacity:.4;cursor:not-allowed}
+
+  .statusbar{display:flex;align-items:center;gap:10px;font-size:14px;margin-bottom:6px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+  .dot.run{background:var(--blue);box-shadow:0 0 0 0 rgba(79,140,255,.6);animation:pulse 1.4s infinite}
+  .dot.done{background:var(--green)}.dot.err{background:var(--accent)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(79,140,255,.5)}70%{box-shadow:0 0 0 9px rgba(79,140,255,0)}100%{box-shadow:0 0 0 0 rgba(79,140,255,0)}}
+  .msg{color:var(--muted);font-size:13px}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+  .stat{background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:14px}
+  .stat .n{font-size:26px;font-weight:700;letter-spacing:-.5px}
+  .stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-top:2px}
+  .stat.ok .n{color:var(--green)} .stat.skip .n{color:var(--amber)} .stat.err .n{color:var(--accent)}
+
+  .bar{height:10px;background:var(--bg2);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+  .bar>i{display:block;height:100%;width:0;border-radius:99px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s}
+  .barlbl{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:14px 0 6px}
+
+  .now{background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:16px;margin-top:16px}
+  .now .ttl{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .now .meta{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+  .now .meta b{color:var(--txt);font-weight:600}
+  .nowbar{height:6px;margin-top:10px}
+
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tab{font-size:13px;color:var(--muted);padding:7px 14px;border-radius:9px;cursor:pointer}
+  .tab.on{background:var(--bg2);color:var(--txt)}
+  .log{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+    background:#0a0c11;border:1px solid var(--line);border-radius:12px;padding:14px;
+    height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+  .log .t{color:#56607a;margin-right:10px}
+  .files{height:280px;overflow-y:auto}
+  .file{display:flex;justify-content:space-between;gap:12px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px}
+  .file .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .file .sz{color:var(--muted);flex:none}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:40px 0}
+  .hidden{display:none}
+  .foot{text-align:center;color:#5a6273;font-size:12px;margin-top:24px}
+  @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M21.6 7.2a2.6 2.6 0 0 0-1.8-1.8C18 5 12 5 12 5s-6 0-7.8.4A2.6 2.6 0 0 0 2.4 7.2 27 27 0 0 0 2 12a27 27 0 0 0 .4 4.8 2.6 2.6 0 0 0 1.8 1.8C6 19 12 19 12 19s6 0 7.8-.4a2.6 2.6 0 0 0 1.8-1.8A27 27 0 0 0 22 12a27 27 0 0 0-.4-4.8zM10 15V9l5 3z"/></svg></div>
+    <div>
+      <h1>Channel Archiver</h1>
+      <div class="sub">Download every video from a YouTube channel — oldest first, nothing missed.</div>
+    </div>
+  </header>
+
+  <!-- Input -->
+  <div class="card" id="form">
+    <label class="fld" for="url">Channel URL</label>
+    <div class="urlrow">
+      <input id="url" type="text" placeholder="https://www.youtube.com/@PewDiePie" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="opts">
+      <select id="quality" title="Maximum quality">
+        <option value="bestvideo*+bestaudio/best">Best quality</option>
+        <option value="bestvideo[height<=1080]+bestaudio/best">Up to 1080p</option>
+        <option value="bestvideo[height<=720]+bestaudio/best">Up to 720p (saves space)</option>
+        <option value="bestvideo[height<=480]+bestaudio/best">Up to 480p</option>
+      </select>
+      <label class="chip"><input type="checkbox" id="audioOnly"> Audio only (MP3)</label>
+      <label class="chip"><input type="checkbox" id="subs" checked> Subtitles</label>
+      <label class="chip"><input type="checkbox" id="cookies"> Use cookies.txt</label>
+    </div>
+    <div class="btnrow">
+      <button class="primary" id="startBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+        Download channel
+      </button>
+      <button class="ghost" id="stopBtn" disabled>Stop</button>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card">
+    <div class="statusbar"><span class="dot" id="dot"></span><span id="statusTxt">Idle</span></div>
+    <div class="msg" id="msg">Paste a channel link above and hit download.</div>
+
+    <div class="stats">
+      <div class="stat"><div class="n" id="sTotal">0</div><div class="k">Videos found</div></div>
+      <div class="stat ok"><div class="n" id="sDone">0</div><div class="k">Downloaded</div></div>
+      <div class="stat skip"><div class="n" id="sSkip">0</div><div class="k">Already had</div></div>
+      <div class="stat err"><div class="n" id="sErr">0</div><div class="k">Errors</div></div>
+    </div>
+
+    <div class="barlbl"><span>Overall progress</span><span id="overallPct">0%</span></div>
+    <div class="bar"><i id="overall"></i></div>
+
+    <div class="now hidden" id="nowCard">
+      <div class="ttl" id="nowTitle">—</div>
+      <div class="meta">
+        <span>Video <b id="nowIdx">0</b> / <b id="nowN">0</b></span>
+        <span><b id="nowSpeed">—</b></span>
+        <span>ETA <b id="nowEta">—</b></span>
+        <span><b id="nowSize">—</b></span>
+        <span id="nowPct">0%</span>
+      </div>
+      <div class="bar nowbar"><i id="nowBar"></i></div>
+    </div>
+  </div>
+
+  <!-- Log / Files -->
+  <div class="card">
+    <div class="tabs">
+      <div class="tab on" id="tabLog">Activity</div>
+      <div class="tab" id="tabFiles">Files</div>
+    </div>
+    <div class="log" id="log"></div>
+    <div class="files hidden" id="files"></div>
+  </div>
+
+  <div class="foot">For personal &amp; archival use. Respect YouTube's Terms of Service and copyright.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtSize = b => { if(!b) return "0 B"; const u=["B","KB","MB","GB","TB"]; let i=0,n=b; while(n>=1024&&i<u.length-1){n/=1024;i++} return n.toFixed(n<10&&i>0?1:0)+" "+u[i]; };
+
+let running = false;
+
+$("startBtn").onclick = async () => {
+  const url = $("url").value.trim();
+  if(!url){ $("url").focus(); return; }
+  const body = {
+    url,
+    format: $("audioOnly").checked ? null : $("quality").value,
+    audioOnly: $("audioOnly").checked,
+    subs: $("subs").checked,
+    cookies: $("cookies").checked,
+  };
+  $("startBtn").disabled = true;
+  const r = await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j = await r.json();
+  if(!j.ok){ alert(j.error||"Failed to start"); $("startBtn").disabled=false; }
+};
+
+$("stopBtn").onclick = async () => {
+  $("stopBtn").disabled = true;
+  await fetch("/api/stop",{method:"POST"});
+};
+
+// Tabs
+$("tabLog").onclick = () => { $("tabLog").classList.add("on"); $("tabFiles").classList.remove("on"); $("log").classList.remove("hidden"); $("files").classList.add("hidden"); };
+$("tabFiles").onclick = () => { $("tabFiles").classList.add("on"); $("tabLog").classList.remove("on"); $("files").classList.remove("hidden"); $("log").classList.add("hidden"); loadFiles(); };
+
+async function loadFiles(){
+  const r = await fetch("/api/files"); const j = await r.json();
+  const el = $("files");
+  if(!j.files.length){ el.innerHTML = '<div class="empty">No files yet.</div>'; return; }
+  el.innerHTML = j.files.map(f =>
+    `<div class="file"><span class="nm">${f.name.replace(/</g,"&lt;")}</span><span class="sz">${fmtSize(f.size)}</span></div>`
+  ).join("");
+}
+
+const STATUS = {
+  idle:["","Idle"], preparing:["run","Scanning channel…"], downloading:["run","Downloading"],
+  stopping:["run","Stopping…"], done:["done","Completed"], error:["err","Error"],
+};
+
+let lastLogLen = 0;
+async function poll(){
+  try{
+    const r = await fetch("/api/status"); const s = await r.json();
+    const [cls,txt] = STATUS[s.status] || ["","—"];
+    $("dot").className = "dot " + cls;
+    $("statusTxt").textContent = txt;
+    $("msg").textContent = s.message || "";
+
+    $("sTotal").textContent = s.total;
+    $("sDone").textContent = s.completed;
+    $("sSkip").textContent = s.skipped;
+    $("sErr").textContent = s.errors;
+
+    const done = s.completed + s.skipped;
+    const pct = s.total ? Math.min(100, Math.round(done / s.total * 100)) : 0;
+    $("overall").style.width = pct + "%";
+    $("overallPct").textContent = pct + "%";
+
+    const active = (s.status==="downloading"||s.status==="stopping");
+    $("nowCard").classList.toggle("hidden", !active || !s.current.title);
+    if(s.current){
+      $("nowTitle").textContent = s.current.title || "—";
+      $("nowIdx").textContent = s.current.index || 0;
+      $("nowN").textContent = s.current.n_entries || s.total || 0;
+      $("nowSpeed").textContent = s.current.speed || "—";
+      $("nowEta").textContent = s.current.eta || "—";
+      $("nowSize").textContent = s.current.size || "—";
+      $("nowPct").textContent = (s.current.percent||0) + "%";
+      $("nowBar").style.width = (s.current.percent||0) + "%";
+    }
+
+    // log
+    if(s.log.length !== lastLogLen){
+      lastLogLen = s.log.length;
+      const el = $("log");
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+      el.innerHTML = s.log.map(l => `<div><span class="t">${l.t}</span>${l.m.replace(/</g,"&lt;")}</div>`).join("");
+      if(atBottom) el.scrollTop = el.scrollHeight;
+    }
+
+    running = (s.status==="preparing"||s.status==="downloading"||s.status==="stopping");
+    $("startBtn").disabled = running;
+    $("stopBtn").disabled = !(s.status==="preparing"||s.status==="downloading");
+    if(!$("files").classList.contains("hidden") && (s.status==="done")) loadFiles();
+  }catch(e){ /* server momentarily busy; keep polling */ }
+}
+setInterval(poll, 1000); poll();
+</script>
+</body>
+</html>

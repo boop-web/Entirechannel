@@ -1,16 +1,14 @@
 services:
-  downloader:
+  archiver:
     build: .
-    image: yt-channel-downloader
-    # The channel to grab. Override on the command line:
-    #   CHANNEL_URL="https://www.youtube.com/@SomeoneElse" docker compose run --rm downloader
-    command: ["${CHANNEL_URL:-https://www.youtube.com/@PewDiePie}"]
+    image: yt-channel-archiver
+    ports:
+      # Open http://localhost:8000 in your browser after `docker compose up`.
+      - "8000:8000"
     volumes:
-      # All videos land in ./downloads on your host. Change the left side to
-      # point anywhere with enough free space (a full channel can be huge).
+      # All videos land in ./downloads on your host. Point this anywhere with
+      # enough free space — a full channel can be very large.
       - ./downloads:/downloads
     environment:
-      # Optional overrides:
-      # FORMAT: "bestvideo[height<=1080]+bestaudio/best"
-      # ARCHIVE_FILE: "/downloads/downloaded.txt"
       TZ: "${TZ:-UTC}"
+    restart: unless-stopped
